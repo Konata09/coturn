@@ -568,30 +568,59 @@ int ioa_addr_is_zero(ioa_addr *addr) {
 // Must be called only in a single-threaded context,
 // before the program starts spawning threads:
 
-static ioa_addr **public_addrs = NULL;
+static ioa_addr **public_addrs = NULL;  // If public_addrs[i] == NULL then it must be resolved from public_hostname.
 static ioa_addr **private_addrs = NULL;
 static size_t mcount = 0;
 static size_t msz = 0;
+static const char *public_hostname = NULL;
 
-void ioa_addr_add_mapping(ioa_addr *apub, ioa_addr *apriv) {
+static void ioa_addr_add_mapping_nullable(ioa_addr *apub, ioa_addr *apriv) {
   size_t new_size = msz + sizeof(ioa_addr *);
   public_addrs = (ioa_addr **)realloc(public_addrs, new_size);
+  if (apub == NULL) {
+    public_addrs[mcount] = NULL;
+  } else {
+    public_addrs[mcount] = (ioa_addr *)malloc(sizeof(ioa_addr));
+    addr_cpy(public_addrs[mcount], apub);
+  }
   private_addrs = (ioa_addr **)realloc(private_addrs, new_size);
-  public_addrs[mcount] = (ioa_addr *)malloc(sizeof(ioa_addr));
   private_addrs[mcount] = (ioa_addr *)malloc(sizeof(ioa_addr));
-  addr_cpy(public_addrs[mcount], apub);
   addr_cpy(private_addrs[mcount], apriv);
   ++mcount;
   msz += sizeof(ioa_addr *);
 }
 
+void ioa_addr_add_mapping(ioa_addr *apub, ioa_addr *apriv) {
+  ioa_addr_add_mapping_nullable(apub, apriv);
+}
+
+int ioa_addr_add_dynamic_mapping(const char *hpub, ioa_addr *apriv) {
+  if (public_hostname == NULL) {
+    public_hostname = strdup(hpub);
+  } else {
+    if (strcmp(hpub, public_hostname) != 0) {
+      return -1;
+    }
+  }
+  ioa_addr_add_mapping_nullable(NULL, apriv);
+  return 0;
+}
+
 void map_addr_from_public_to_private(const ioa_addr *public_addr, ioa_addr *private_addr) {
   size_t i;
-  for (i = 0; i < mcount; ++i) {
-    if (addr_eq_no_port(public_addr, public_addrs[i])) {
-      addr_cpy(private_addr, private_addrs[i]);
-      addr_set_port(private_addr, addr_get_port(public_addr));
-      return;
+  int pass;
+  for (pass = 0; pass < 2; ++pass) {
+    for (i = 0; i < mcount; ++i) {
+      // Process non-NULL public_addrs before NULL ones.
+      {
+        if (pass == 0 && public_addrs[i] == NULL) continue;
+        else if (pass == 1 && public_addrs[i] != NULL) continue;
+      }
+      if ((pass == 0 && addr_eq_no_port(public_addr, public_addrs[i])) || (pass == 1 /* && TODO: public_addr is resolved to public_hostname */)) {
+        addr_cpy(private_addr, private_addrs[i]);
+        addr_set_port(private_addr, addr_get_port(public_addr));
+        return;
+      }
     }
   }
   addr_cpy(private_addr, public_addr);
@@ -601,7 +630,14 @@ void map_addr_from_private_to_public(const ioa_addr *private_addr, ioa_addr *pub
   size_t i;
   for (i = 0; i < mcount; ++i) {
     if (addr_eq_no_port(private_addr, private_addrs[i])) {
-      addr_cpy(public_addr, public_addrs[i]);
+      if (public_addrs[i] == NULL) {
+        // TODO: This code relies on the fact that make_ioa_addr() resolves hostnames with getaddrinfo().
+        if (make_ioa_addr((const uint8_t *)public_hostname, 0, public_addr) < 0) {
+          make_ioa_addr((const uint8_t *)"0.0.0.0", 0, public_addr); // TODO: Fail more gracefully.
+        }
+      } else {
+        addr_cpy(public_addr, public_addrs[i]);
+      }
       addr_set_port(public_addr, addr_get_port(private_addr));
       return;
     }

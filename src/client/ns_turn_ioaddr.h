@@ -100,6 +100,11 @@ void ioa_addr_add_mapping(ioa_addr *apub, ioa_addr *apriv);
 void map_addr_from_public_to_private(const ioa_addr *public_addr, ioa_addr *private_addr);
 void map_addr_from_private_to_public(const ioa_addr *private_addr, ioa_addr *public_addr);
 
+// Returns:
+//    0 - success
+//   -1 - error, mapping more than one public_hostname_
+int ioa_addr_add_dynamic_mapping(const char *public_hostname_, ioa_addr *apriv);
+
 ///////////////////////////////////////////
 
 #ifdef __cplusplus

@@ -995,6 +995,9 @@ static char Usage[] =
     "						that option must be used several times in the command line, each entry "
     "must\n"
     "						have form \"-X public-ip/private-ip\", to map all involved addresses.\n"
+    " --external-hostname  <public-hostname/private-ip> The same as --external-ip\nbut public-hostname is always resolved dynamically.\n"
+    "                                           The option can be used multiple times\nbut public-hostname must always be the same.\n"
+    "                                           The option is always processed after --external-ip.\n"
     " --allow-loopback-peers				Allow peers on the loopback addresses (127.x.x.x and ::1).\n"
     " --no-multicast-peers				Disallow peers on well-known broadcast addresses (224.0.0.0 "
     "and above, and FFXX:*).\n"
@@ -1490,7 +1493,8 @@ enum EXTRA_OPTS {
   NO_STUN_BACKWARD_COMPATIBILITY_OPT,
   RESPONSE_ORIGIN_ONLY_WITH_RFC5780_OPT,
   RESPOND_HTTP_UNSUPPORTED_OPT,
-  VERSION_OPT
+  VERSION_OPT,
+  EXTERNAL_HOSTNAME_OPT
 };
 
 struct myoption {
@@ -1519,6 +1523,7 @@ static const struct myoption long_options[] = {
     {"relay-device", required_argument, NULL, 'i'},
     {"relay-ip", required_argument, NULL, 'E'},
     {"external-ip", required_argument, NULL, 'X'},
+    {"external-hostname", required_argument, NULL, EXTERNAL_HOSTNAME_OPT},
     {"relay-threads", required_argument, NULL, 'm'},
     {"min-port", required_argument, NULL, MIN_PORT_OPT},
     {"max-port", required_argument, NULL, MAX_PORT_OPT},
@@ -2108,6 +2113,38 @@ static void set_option(int c, char *value) {
             turn_params.external_ip = NULL;
           }
         }
+      }
+    }
+    break;
+  case EXTERNAL_HOSTNAME_OPT:
+    if (value) {
+      char *div = strchr(value, '/');
+      if (div) {
+        char *nval = strdup(value);
+        div = strchr(nval, '/');
+        div[0] = 0;
+        ++div;
+        ioa_addr apriv;
+        if (make_ioa_addr((const uint8_t *)div, 0, &apriv) < 0) {
+          TURN_LOG_FUNC(TURN_LOG_LEVEL_ERROR, "--external-hostname : Wrong address format: %s\n", div);
+        } else {
+          switch (ioa_addr_add_dynamic_mapping(nval, &apriv)) {
+            case 0:
+              if (add_ip_list_range(div, NULL, &turn_params.ip_whitelist) == 0) {
+                TURN_LOG_FUNC(TURN_LOG_LEVEL_INFO, "Whitelisting external-hostname private part: %s\n", div);
+              }
+              break;
+            case -1:
+              TURN_LOG_FUNC(TURN_LOG_LEVEL_ERROR, "--external-hostname : Mapping to more than one public hostname is not supported yet: %s\n", nval);
+              break;
+            default:
+              TURN_LOG_FUNC(TURN_LOG_LEVEL_ERROR, "--external-hostname : Unknown error while processing the value: %s\n", value);
+              break;
+          }
+        }
+        free(nval);
+      } else {
+        TURN_LOG_FUNC(TURN_LOG_LEVEL_ERROR, "--external-hostname : Wrong value, expected <hostname/address>: %s\n", value);
       }
     }
     break;
